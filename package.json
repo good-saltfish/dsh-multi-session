@@ -1,0 +1,70 @@
+{
+  "name": "dsh-multi-session",
+  "version": "0.3.0",
+  "description": "多会话一体：在同一个会话里总览并排显示多个会话的实时状态与完整对话，钉住任意几个同时看、直接发消息或打断，不用来回点开切换。",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "icon.png",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "multi-session",
+    "session",
+    "dashboard",
+    "sidebar",
+    "agent"
+  ],
+  "license": "MIT",
+  "author": "good-saltfish",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/good-saltfish/dsh-multi-session.git"
+  },
+  "homepage": "https://github.com/good-saltfish/dsh-multi-session#readme",
+  "bugs": {
+    "url": "https://github.com/good-saltfish/dsh-multi-session/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-client-ui-conversation": ">=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0",
+    "@deepseek-ai/dsh-client-ui-layout": ">=0.0.1-rc.1 <0.1.0 || >=0.1.0-rc.1 <0.2.0-0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-client-ui-conversation": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-layout": {
+      "optional": true
+    }
+  }
+}
