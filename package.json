@@ -1,6 +1,6 @@
 {
   "name": "dsh-multi-session",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "多会话一体：在同一个会话里总览并排显示多个会话的实时状态与完整对话，钉住任意几个同时看、直接发消息或打断，不用来回点开切换。",
   "type": "module",
   "main": "./index.js",
