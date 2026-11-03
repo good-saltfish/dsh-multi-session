@@ -57,7 +57,7 @@ window.__ModuleLoader__.load({
     })()
 
     /** 诊断代号：每次改动递增，用来区分浏览器里跑的是哪一代 bundle。 */
-    const BUILD = 'panel-v51'
+    const BUILD = 'panel-v56'
 
     /** apply() 的 ctx，用于点击跳转。 */
     let rootCtx
@@ -475,6 +475,8 @@ let promptProbed = false
 
     const RUNNING_COLOR = '#22a06b'
     const FINISHED_COLOR = '#3b6cf6'
+    /** 「在等你」用琥珀色：和运行中的绿、待查看的蓝必须一眼分开。 */
+    const WAITING_COLOR = '#d97706'
 
     const S = {
       root: {
@@ -546,7 +548,7 @@ let promptProbed = false
         borderRadius: 8,
         border: '1px solid var(--dsw-alias-border-l1)',
         background: 'var(--dsw-alias-bg-layer-1)',
-        cursor: 'pointer',
+        // 整卡不再是可点区域（点它会误触跳转），所以也不再给手型光标。
         transition: 'background 120ms ease, border-color 120ms ease',
       },
       cardRunning: { borderColor: 'rgba(34,160,107,0.45)' },
@@ -563,6 +565,49 @@ let promptProbed = false
       },
       cardBody: { display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0, flex: '1 1 auto' },
       cardTitleRow: { display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 },
+      /* 「改了什么文件」：比读对话更快判断它干完没有。 */
+      cardChanges: {
+        display: 'flex',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: 6,
+        marginTop: 3,
+        fontSize: 11,
+        lineHeight: 1.4,
+        color: 'var(--dsw-alias-label-secondary)',
+      },
+      cardChangesCount: { color: RUNNING_COLOR, fontWeight: 600, flex: '0 0 auto' },
+      cardChangesDiff: {
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        fontSize: 10.5,
+        flex: '0 0 auto',
+      },
+      cardChangesNames: {
+        opacity: 0.85,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+        minWidth: 0,
+        flex: '1 1 auto',
+      },
+      /* 卡片底部两个明确动作：并排看 / 打开。整卡不再是可点区域。 */
+      cardActions: { display: 'flex', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' },
+      cardOpenBtn: {
+        flex: '0 0 auto',
+        display: 'inline-flex',
+        alignItems: 'center',
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: 'transparent',
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: 11,
+        lineHeight: 1.5,
+        fontWeight: 500,
+        cursor: 'pointer',
+        padding: '3px 9px',
+        borderRadius: 999,
+        whiteSpace: 'nowrap',
+        transition: 'background 120ms ease, border-color 120ms ease, color 120ms ease',
+      },
       cardTitle: {
         fontWeight: 500,
         overflow: 'hidden',
@@ -578,6 +623,14 @@ let promptProbed = false
         borderRadius: 999,
         border: '1px solid currentColor',
         opacity: 0.9,
+      },
+      /* 「在等你」用琥珀色，和运行中的绿色、待查看的蓝色都区分开。 */
+      badgeWaiting: {
+        color: WAITING_COLOR,
+        background: 'rgba(217,119,6,0.14)',
+        border: '1px solid rgba(217,119,6,0.42)',
+        fontWeight: 600,
+        opacity: 1,
       },
       metaRow: {
         display: 'flex',
@@ -617,6 +670,132 @@ let promptProbed = false
         flex: 1,
         borderRight: 'none',
         paddingRight: 0,
+      },
+      /* 搜索框：跨会话全文搜索（Host 走 sessionController.search，不激活会话）。 */
+      searchBar: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '0 12px 8px',
+      },
+      searchInput: {
+        flex: '1 1 auto',
+        minWidth: 0,
+        fontSize: 12,
+        padding: '5px 9px',
+        borderRadius: 6,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: 'var(--dsw-alias-bg-layer-1)',
+        color: 'var(--dsw-alias-label-primary)',
+        outline: 'none',
+      },
+      searchBtn: {
+        flex: '0 0 auto',
+        fontSize: 11.5,
+        padding: '5px 11px',
+        borderRadius: 6,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: 'var(--dsw-alias-bg-layer-2)',
+        color: 'var(--dsw-alias-label-secondary)',
+        cursor: 'pointer',
+      },
+      searchResults: { display: 'flex', flexDirection: 'column', gap: 10 },
+      searchSummary: {
+        fontSize: 11.5,
+        color: 'var(--dsw-alias-label-secondary)',
+        padding: '2px 0',
+      },
+      searchHitGroup: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        padding: '7px 9px',
+        borderRadius: 8,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: 'var(--dsw-alias-bg-layer-1)',
+      },
+      searchHitTitle: {
+        fontSize: 12,
+        fontWeight: 600,
+        color: 'var(--dsw-alias-brand-primary)',
+        cursor: 'pointer',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      },
+      searchSnippet: {
+        fontSize: 11.5,
+        lineHeight: 1.5,
+        color: 'var(--dsw-alias-label-secondary)',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+        paddingLeft: 8,
+        borderLeft: '2px solid var(--dsw-alias-border-l1)',
+      },
+      /* 会话间传话的目标选择条。 */
+      forwardBar: {
+        display: 'flex',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: 7,
+        margin: '0 12px 8px',
+        padding: '7px 10px',
+        borderRadius: 8,
+        border: '1px solid rgba(59,108,246,0.4)',
+        background: 'rgba(59,108,246,0.08)',
+      },
+      forwardLabel: {
+        fontSize: 11.5,
+        color: 'var(--dsw-alias-brand-primary)',
+        fontWeight: 600,
+        flex: '0 0 auto',
+      },
+      forwardSelect: {
+        flex: '1 1 200px',
+        minWidth: 0,
+        fontSize: 11.5,
+        padding: '4px 8px',
+        borderRadius: 6,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: 'var(--dsw-alias-bg-layer-1)',
+        color: 'var(--dsw-alias-label-primary)',
+      },
+      forwardBtnOk: {
+        flex: '0 0 auto',
+        fontSize: 11.5,
+        padding: '4px 12px',
+        borderRadius: 6,
+        border: '1px solid var(--dsw-alias-brand-primary)',
+        background: 'var(--dsw-alias-brand-primary)',
+        color: '#fff',
+        cursor: 'pointer',
+      },
+      forwardCancel: {
+        flex: '0 0 auto',
+        fontSize: 11.5,
+        padding: '4px 10px',
+        borderRadius: 6,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: 'transparent',
+        color: 'var(--dsw-alias-label-secondary)',
+        cursor: 'pointer',
+      },
+      forwardNote: { fontSize: 11, color: 'var(--dsw-alias-label-secondary)', flex: '0 0 auto' },
+      digestRoleRow: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 },
+      forwardBtn: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        border: '1px solid rgba(59,108,246,0.45)',
+        background: 'rgba(59,108,246,0.12)',
+        color: 'var(--dsw-alias-brand-primary)',
+        fontSize: 10.5,
+        lineHeight: '15px',
+        fontWeight: 600,
+        padding: '1px 7px',
+        borderRadius: 999,
+        cursor: 'pointer',
+        whiteSpace: 'nowrap',
+        transition: 'background 120ms ease, border-color 120ms ease, color 120ms ease',
       },
       board: {
         display: 'flex',
@@ -685,23 +864,30 @@ let promptProbed = false
         flexDirection: 'column',
         gap: 2,
       },
-      digestMsgUser: {
+      /* 一左一右：我说的话靠右、用品牌色；助手的回复靠左、用中性底色。
+         靠对齐 + 配色两重信号，扫一眼就知道这句是谁说的。 */
+      digestRow: {
         display: 'flex',
         flexDirection: 'column',
         gap: 3,
-        padding: '7px 9px',
-        borderRadius: 8,
-        borderLeft: '2px solid var(--dsw-alias-brand-primary)',
-        background: 'var(--dsw-alias-bg-layer-2)',
+        marginBottom: 9,
+        maxWidth: '100%',
       },
-      digestMsgAssistant: {
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 3,
-        padding: '7px 9px',
-        borderRadius: 8,
-        borderLeft: `2px solid ${RUNNING_COLOR}`,
-        background: 'var(--dsw-alias-bg-base)',
+      digestRowUser: { alignItems: 'flex-end' },
+      digestRowAssistant: { alignItems: 'flex-start' },
+      digestBubbleUser: {
+        maxWidth: '86%',
+        padding: '7px 10px',
+        borderRadius: '10px 10px 2px 10px',
+        background: 'rgba(59, 108, 246, 0.14)',
+        border: '1px solid rgba(59, 108, 246, 0.45)',
+      },
+      digestBubbleAssistant: {
+        maxWidth: '95%',
+        padding: '7px 10px',
+        borderRadius: '10px 10px 10px 2px',
+        background: 'var(--dsw-alias-bg-layer-2)',
+        border: '1px solid var(--dsw-alias-border-l1)',
       },
       moreBtn: {
         alignSelf: 'stretch',
@@ -761,6 +947,21 @@ let promptProbed = false
         fontWeight: 600,
         letterSpacing: '0.02em',
         textTransform: 'uppercase',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 3,
+      },
+      digestRoleUser: {
+        padding: '1px 7px',
+        borderRadius: 999,
+        background: 'rgba(59, 108, 246, 0.18)',
+        color: 'var(--dsw-alias-brand-primary)',
+      },
+      digestRoleAssistant: {
+        padding: '1px 7px',
+        borderRadius: 999,
+        background: 'rgba(34, 160, 107, 0.16)',
+        color: RUNNING_COLOR,
       },
       digestText: {
         fontSize: 12,
@@ -769,19 +970,130 @@ let promptProbed = false
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
       },
+      /* ---- Markdown 渲染样式（并排对话正文） ---- */
+      mdP: { margin: '0 0 6px', whiteSpace: 'pre-wrap' },
+      mdH1: {
+        margin: '8px 0 5px',
+        fontSize: 13.5,
+        fontWeight: 700,
+        lineHeight: 1.35,
+        color: 'var(--dsw-alias-label-primary)',
+      },
+      mdH2: {
+        margin: '7px 0 4px',
+        fontSize: 12.5,
+        fontWeight: 600,
+        lineHeight: 1.35,
+        color: 'var(--dsw-alias-label-primary)',
+      },
+      mdList: { margin: '0 0 6px', paddingLeft: 18 },
+      mdLi: { margin: '1px 0', whiteSpace: 'pre-wrap' },
+      mdStrong: { fontWeight: 700, color: 'var(--dsw-alias-label-primary)' },
+      mdEm: { fontStyle: 'italic' },
+      mdCode: {
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        fontSize: 11,
+        padding: '1px 4px',
+        borderRadius: 4,
+        background: 'var(--dsw-alias-bg-layer-2)',
+        border: '1px solid var(--dsw-alias-border-l1)',
+      },
+      mdPre: {
+        margin: '4px 0 7px',
+        padding: '7px 9px',
+        borderRadius: 6,
+        background: 'var(--dsw-alias-bg-layer-2)',
+        border: '1px solid var(--dsw-alias-border-l1)',
+        overflowX: 'auto',
+        maxWidth: '100%',
+      },
+      mdPreLang: {
+        fontSize: 10,
+        color: 'var(--dsw-alias-label-secondary)',
+        marginBottom: 3,
+        textTransform: 'uppercase',
+        letterSpacing: '0.04em',
+      },
+      mdPreCode: {
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        fontSize: 11,
+        lineHeight: 1.5,
+        whiteSpace: 'pre',
+        color: 'var(--dsw-alias-label-primary)',
+      },
+      mdQuote: {
+        margin: '4px 0 7px',
+        paddingLeft: 9,
+        borderLeft: '3px solid var(--dsw-alias-border-l2)',
+        color: 'var(--dsw-alias-label-secondary)',
+        whiteSpace: 'pre-wrap',
+      },
+      mdHr: {
+        margin: '8px 0',
+        height: 1,
+        background: 'var(--dsw-alias-border-l1)',
+        border: 'none',
+      },
+      mdLink: { color: 'var(--dsw-alias-brand-primary)', textDecoration: 'none' },
+      mdTableWrap: { margin: '4px 0 7px', overflowX: 'auto', maxWidth: '100%' },
+      mdTable: { borderCollapse: 'collapse', fontSize: 11.5, lineHeight: 1.45 },
+      mdTh: {
+        border: '1px solid var(--dsw-alias-border-l1)',
+        padding: '3px 7px',
+        background: 'var(--dsw-alias-bg-layer-2)',
+        fontWeight: 600,
+        textAlign: 'left',
+        whiteSpace: 'nowrap',
+      },
+      mdTd: {
+        border: '1px solid var(--dsw-alias-border-l1)',
+        padding: '3px 7px',
+        verticalAlign: 'top',
+      },
+      /**
+       * 卡片上的「并排看」按钮。
+       * 之前只是一个 12px 的 ⊞ 字形、透明底，用户既看不出它能点，
+       * 又因为点不中而误触卡片本体（整张卡片都是"打开会话"），
+       * 所以这里做成有边框、有底色、带文字的实心小按钮，命中区放大到能一眼认出来。
+       */
       pinBtn: {
         flex: '0 0 auto',
-        border: 'none',
-        background: 'transparent',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        border: '1px solid var(--dsw-alias-border-l2)',
+        background: 'var(--dsw-alias-bg-layer-2)',
         color: 'var(--dsw-alias-label-secondary)',
-        fontSize: 12,
-        lineHeight: 1,
+        fontSize: 11,
+        lineHeight: 1.5,
+        fontWeight: 500,
         cursor: 'pointer',
-        padding: '0 2px',
-        borderRadius: 4,
+        padding: '3px 9px',
+        borderRadius: 999,
+        whiteSpace: 'nowrap',
+        transition: 'background 120ms ease, border-color 120ms ease, color 120ms ease',
       },
       pinBtnActive: {
         color: 'var(--dsw-alias-brand-primary)',
+        borderColor: 'var(--dsw-alias-brand-primary)',
+        background: 'rgba(59,108,246,0.12)',
+      },
+      /* 并排列头上那个"×"仍然要小，但也要有边界，不然同样看不出可点。 */
+      colCloseBtn: {
+        flex: '0 0 auto',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 20,
+        height: 20,
+        border: '1px solid var(--dsw-alias-border-l1)',
+        background: 'transparent',
+        color: 'var(--dsw-alias-label-secondary)',
+        fontSize: 13,
+        lineHeight: 1,
+        cursor: 'pointer',
+        padding: 0,
+        borderRadius: 6,
       },
       boardEmpty: {
         display: 'flex',
@@ -800,25 +1112,32 @@ let promptProbed = false
      * ------------------------------------------------------------------ */
 
     function StatusDot(props) {
-      const color = props.running ? RUNNING_COLOR : props.finished ? FINISHED_COLOR : 'var(--dsw-alias-label-secondary)'
+      const color = props.waiting
+        ? WAITING_COLOR
+        : props.running
+          ? RUNNING_COLOR
+          : props.finished
+            ? FINISHED_COLOR
+            : 'var(--dsw-alias-label-secondary)'
       const style = { ...S.dot, background: color, marginTop: 5 }
-      if (props.running) {
+      if (props.waiting) {
+        style.boxShadow = `0 0 0 3px rgba(217,119,6,0.2)`
+      } else if (props.running) {
         style.boxShadow = `0 0 0 3px rgba(34,160,107,0.16)`
       }
       return h('span', { style })
     }
 
     /**
-     * 列表卡片上的一行「最后说了什么」。
-     * 只对运行中 / 刚完成的卡片挂载，且只拉一次（不轮询）——目的是不用钉住也能知道结果，
-     * 所以刻意用很小的 limit，别让列表本身变成 15 个并发重放。
+     * 卡片状态：最后说了什么 / 是不是在等你 / 改了哪些文件。
+     *
+     * 一次 /digest 同时拿到三样东西，所以卡片只发一次请求。
+     * 轮询策略：只有运行中的会话才轮（1.2 秒，通常也就 1–3 个），
+     * 停下来的只拉一次 —— 否则 15 张卡片会让列表页变成负载源。
      */
-    function LastLine(props) {
-      const entry = props.entry
-      // 第五个参数 false：卡片末行只拉一次，不参与慢轮询。
-      // 否则 15 张卡片会各自每 8 秒打一次 /digest，列表页瞬间变成负载源。
-      const digest = useDigest(entry.id, false, 3, 0, false)
-      if (digest.error !== '' || digest.items.length === 0) return null
+    function useCardStatus(entry) {
+      // 第五个参数 false：非运行中的会话不参与慢轮询。
+      const digest = useDigest(entry.id, Boolean(entry.running), 3, 0, false)
       let text = ''
       for (let index = digest.items.length - 1; index >= 0; index -= 1) {
         const item = digest.items[index]
@@ -833,12 +1152,22 @@ let promptProbed = false
         const last = digest.items[digest.items.length - 1]
         if (last && last.text) text = `[我] ${last.text}`
       }
-      if (text === '') return null
-      return h('div', { style: S.cardLast }, clip(text.replace(/\s+/g, ' ').trim(), 160))
+      return { digest, lastText: text }
+    }
+
+    /** 列表卡片上的一行「最后说了什么」。 */
+    function LastLine(props) {
+      const { lastText } = useCardStatus(props.entry)
+      if (lastText === '') return null
+      return h('div', { style: S.cardLast }, clip(lastText.replace(/\s+/g, ' ').trim(), 160))
     }
 
     function SessionCard(props) {
       const entry = props.entry
+      // 一次 /digest 同时拿到末行摘要、在等你、改了哪些文件，卡片只发一次请求。
+      const status = useCardStatus(entry)
+      const waiting = entry.waiting || status.digest.waiting || ''
+      const changes = status.digest.changes
       const meta = []
       if (entry.running) meta.push('运行中')
       else if (entry.finishedAt) meta.push(`完成于 ${relativeTime(entry.finishedAt)}`)
@@ -852,11 +1181,15 @@ let promptProbed = false
       if (entry.running) Object.assign(cardStyle, S.cardRunning)
       else if (entry.finishedAt) Object.assign(cardStyle, S.cardFinished)
 
+      /**
+       * 整张卡片不再绑定"打开会话"。
+       * 之前卡片任意位置一点就跳走，用户想点右边那个小按钮时会误触到卡片本体，
+       * 结果"想展开却变成了跳进另一个会话"。现在只有下面两个明确的按钮才产生动作。
+       */
       return h(
         'div',
         {
           style: cardStyle,
-          onClick: () => props.onOpen(entry.id),
           onMouseEnter: (event) => {
             event.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover)'
           },
@@ -865,7 +1198,11 @@ let promptProbed = false
           },
           title: entry.cwd || entry.title,
         },
-        h(StatusDot, { running: entry.running, finished: Boolean(entry.finishedAt) }),
+        h(StatusDot, {
+          running: entry.running,
+          finished: Boolean(entry.finishedAt),
+          waiting: Boolean(waiting),
+        }),
         h(
           'div',
           { style: S.cardBody },
@@ -873,6 +1210,26 @@ let promptProbed = false
             'div',
             { style: S.cardTitleRow },
             h('span', { style: S.cardTitle }, entry.title),
+            /*
+             * 「在等你」：会话卡住等你回话时 running 仍然是 true，
+             * 光看运行中分不出来 —— 它可能在空转十几分钟，你却以为它在干活。
+             * 所以这个标记放在最前面，且配色与「运行中」区分开。
+             */
+            entry.waiting || waiting
+              ? h(
+                  'span',
+                  {
+                    style: { ...S.badge, ...S.badgeWaiting },
+                    title:
+                      waiting === 'question'
+                        ? '它在等你回答问题'
+                        : waiting === 'approval'
+                          ? '它在等你批准一个操作'
+                          : '它在等你',
+                  },
+                  waiting === 'question' ? '等你回话' : '等你批准',
+                )
+              : null,
             entry.running
               ? h('span', { style: { ...S.badge, color: RUNNING_COLOR } }, '运行中')
               : null,
@@ -882,23 +1239,69 @@ let promptProbed = false
             entry.parentId || entry.origin === 'subagent'
               ? h('span', { style: { ...S.badge, color: 'var(--dsw-alias-label-secondary)' } }, '子代理')
               : null,
+          ),
+          meta.length > 0 ? h('div', { style: S.metaRow }, meta.map((text, index) => h('span', { key: index }, text))) : null,
+          status.lastText !== '' ? h('div', { style: S.cardLast }, clip(status.lastText.replace(/\s+/g, ' ').trim(), 160)) : null,
+          changes ? h(ChangesLine, { changes }) : null,
+          h(
+            'div',
+            { style: S.cardActions },
             h(
               'button',
               {
                 type: 'button',
                 style: { ...S.pinBtn, ...(props.pinned ? S.pinBtnActive : {}) },
-                title: props.pinned ? '取消钉住' : '钉住，并排看它的对话',
+                title: props.pinned ? '从并排视图中移除' : '把它钉到右边，并排看它的对话',
                 onClick: (event) => {
                   event.stopPropagation()
                   props.onPin(entry.id)
                 },
               },
-              props.pinned ? '⊟' : '⊞',
+              props.pinned ? '− 移出并排' : '+ 并排看',
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                style: S.cardOpenBtn,
+                title: '切到这个会话',
+                onClick: (event) => {
+                  event.stopPropagation()
+                  props.onOpen(entry.id)
+                },
+              },
+              '打开',
             ),
           ),
-          meta.length > 0 ? h('div', { style: S.metaRow }, meta.map((text, index) => h('span', { key: index }, text))) : null,
-          entry.running || entry.finishedAt ? h(LastLine, { entry }) : null,
         ),
+      )
+    }
+
+    /**
+     * 卡片上的一行「改了什么文件」。
+     * 对"同时跑五六个会话改代码"的场景，这比读对话更快判断它到底干完没有。
+     */
+    function ChangesLine(props) {
+      const changes = props.changes
+      if (!changes || !(changes.total > 0)) return null
+      const parts = []
+      if (changes.added > 0) parts.push(`+${changes.added}`)
+      if (changes.deleted > 0) parts.push(`−${changes.deleted}`)
+      const names = (Array.isArray(changes.files) ? changes.files : [])
+        .slice(0, 3)
+        .map((file) => String(file.display || file.path || '').split(/[\\/]/).pop())
+        .filter((name) => name !== '')
+      return h(
+        'div',
+        {
+          style: S.cardChanges,
+          title: (Array.isArray(changes.files) ? changes.files : [])
+            .map((file) => `${file.display || file.path}  +${file.added} −${file.deleted}`)
+            .join('\n'),
+        },
+        h('span', { style: S.cardChangesCount }, `${changes.total} 个文件`),
+        parts.length > 0 ? h('span', { style: S.cardChangesDiff }, parts.join(' ')) : null,
+        names.length > 0 ? h('span', { style: S.cardChangesNames }, names.join('、')) : null,
       )
     }
 
@@ -957,7 +1360,15 @@ let promptProbed = false
       const bump = Number(nonce) || 0
       /** 是否开启"停下之后继续慢轮询"。列表卡片的末行摘要传 false，只拉一次。 */
       const keepPolling = poll !== false
-      const [state, setState] = React.useState({ items: [], turns: 0, endReason: null, error: '', loading: true })
+      const [state, setState] = React.useState({
+        items: [],
+        turns: 0,
+        endReason: null,
+        waiting: '',
+        changes: null,
+        error: '',
+        loading: true,
+      })
       /**
        * 上一次是不是"运行中"。用来识别"刚跑完"这一帧：
        * 这时候必须绕开缓存拿最新的，否则会显示成"没有回复也没有完成"。
@@ -976,6 +1387,8 @@ let promptProbed = false
               items: Array.isArray(body.items) ? body.items : [],
               turns: Number(body.turns) || 0,
               endReason: body.endReason || null,
+              waiting: typeof body.waiting === 'string' ? body.waiting : '',
+              changes: body.changes !== null && typeof body.changes === 'object' ? body.changes : null,
               error: '',
               loading: false,
             })
@@ -1006,23 +1419,297 @@ let promptProbed = false
       return value.length > max ? `${value.slice(0, max)}…` : value
     }
 
+    /* ------------------------------------------------------------------ *
+     * 极简 Markdown 渲染
+     *
+     * 为什么需要它：会话正文本来就是 Markdown。以前直接把源码 pre-wrap 出来，
+     * 于是并排列里全是 `**关键实证**`、`## 机制`、``` 代码围栏 ``` 这类标记，
+     * 又长又乱 —— 这不是"内容太多"，是"当纯文本显示"造成的。
+     * 渲染成真正的标题/列表/粗体/代码块之后，同样的内容短了将近一半，
+     * 观感也才和 DSH 官方会话视图对得上。
+     *
+     * 安全约束：全程用 React 元素构造，绝不拼 HTML 字符串、不用 dangerouslySetInnerHTML，
+     * 所以会话内容里的任何标签都只会被当成文字显示。
+     * ------------------------------------------------------------------ */
+
+    const MD_MAX_BLOCKS = 400
+    const mdInlineCache = new Map()
+
+    /** 行内语法：`code`、**粗体**、*斜体*、[文字](链接)。按此顺序切分，互不吞并。 */
+    function renderInline(text, keyPrefix) {
+      const source = String(text ?? '')
+      if (source === '') return null
+      const cached = mdInlineCache.get(source)
+      if (cached !== undefined) return cached
+      const out = []
+      const pattern = /(`[^`]+`)|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(\[[^\]]+\]\([^)\s]+\))/g
+      let last = 0
+      let match
+      let index = 0
+      while ((match = pattern.exec(source)) !== null) {
+        if (match.index > last) out.push(source.slice(last, match.index))
+        const token = match[0]
+        if (token.startsWith('`')) {
+          out.push(h('code', { key: `c${index}`, style: S.mdCode }, token.slice(1, -1)))
+        } else if (token.startsWith('**')) {
+          out.push(h('strong', { key: `b${index}`, style: S.mdStrong }, token.slice(2, -2)))
+        } else if (token.startsWith('*')) {
+          out.push(h('em', { key: `i${index}`, style: S.mdEm }, token.slice(1, -1)))
+        } else {
+          const linkMatch = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(token)
+          if (linkMatch !== null) {
+            out.push(
+              h(
+                'a',
+                {
+                  key: `a${index}`,
+                  href: linkMatch[2],
+                  target: '_blank',
+                  rel: 'noreferrer noopener',
+                  style: S.mdLink,
+                },
+                linkMatch[1],
+              ),
+            )
+          } else {
+            out.push(token)
+          }
+        }
+        last = match.index + token.length
+        index += 1
+      }
+      if (last < source.length) out.push(source.slice(last))
+      const result = out.length === 0 ? null : out
+      // 缓存上限：会话里重复的行内片段很多（列表项、表格单元格），
+      // 但正文长度无上限，所以到量就整表清空，简单且不会无界增长。
+      if (mdInlineCache.size > 2000) mdInlineCache.clear()
+      mdInlineCache.set(source, result)
+      return result
+    }
+
     /**
-     * 渲染一条对话。正文按原样保留换行、只做长度上限，不压成摘要。
-     * 并排视图只保留"我 ↔ AI 的对话正文"，
+     * 块级解析：围栏代码块、标题、无序/有序列表、引用、水平线、表格、段落。
+     * 认不出的行一律并进段落 —— 宁可朴素一点，也不要把内容吃掉。
+     */
+    function renderMarkdown(text) {
+      const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n')
+      const blocks = []
+      let index = 0
+
+      const flushParagraph = (buffer) => {
+        if (buffer.length === 0) return
+        blocks.push(h('p', { key: `p${blocks.length}`, style: S.mdP }, renderInline(buffer.join('\n'), `p${blocks.length}`)))
+        buffer.length = 0
+      }
+      const paragraph = []
+
+      while (index < lines.length && blocks.length < MD_MAX_BLOCKS) {
+        const line = lines[index]
+
+        // 围栏代码块：``` 或 ~~~ 开头，闭合标记可以带语言后缀。
+        const fence = /^\s*(`{3,}|~{3,})(.*)$/.exec(line)
+        if (fence !== null) {
+          flushParagraph(paragraph)
+          const marker = fence[1][0]
+          const language = fence[2].trim()
+          const body = []
+          index += 1
+          while (index < lines.length && !new RegExp(`^\\s*${marker}{3,}\\s*$`).test(lines[index])) {
+            body.push(lines[index])
+            index += 1
+          }
+          index += 1
+          blocks.push(
+            h(
+              'pre',
+              { key: `pre${blocks.length}`, style: S.mdPre },
+              language !== '' ? h('div', { style: S.mdPreLang }, language) : null,
+              h('code', { style: S.mdPreCode }, body.join('\n')),
+            ),
+          )
+          continue
+        }
+
+        // 标题
+        const heading = /^\s*(#{1,6})\s+(.*)$/.exec(line)
+        if (heading !== null) {
+          flushParagraph(paragraph)
+          const level = heading[1].length
+          // 会话正文的 h1/h2 对面板来说过大，整体降一级：## 渲染成 h3，
+          // 又因为 h6 是上限，更深的标题共用最小号。
+          blocks.push(
+            h(
+              `h${Math.min(level + 1, 6)}`,
+              { key: `h${blocks.length}`, style: level <= 2 ? S.mdH1 : S.mdH2 },
+              renderInline(heading[2], `h${blocks.length}`),
+            ),
+          )
+          index += 1
+          continue
+        }
+
+        // 水平线
+        if (/^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(line) && line.trim().length >= 3) {
+          flushParagraph(paragraph)
+          blocks.push(h('div', { key: `hr${blocks.length}`, style: S.mdHr }))
+          index += 1
+          continue
+        }
+
+        // 引用
+        if (/^\s*>\s?/.test(line)) {
+          flushParagraph(paragraph)
+          const body = []
+          while (index < lines.length && /^\s*>\s?/.test(lines[index])) {
+            body.push(lines[index].replace(/^\s*>\s?/, ''))
+            index += 1
+          }
+          blocks.push(
+            h('blockquote', { key: `q${blocks.length}`, style: S.mdQuote }, renderInline(body.join('\n'), `q${blocks.length}`)),
+          )
+          continue
+        }
+
+        // 列表：连续的 -/*/+ 或 1. 2. 行合成一个列表。
+        const bullet = /^\s*[-*+]\s+(.*)$/
+        const ordered = /^\s*\d+[.)]\s+(.*)$/
+        if (bullet.test(line) || ordered.test(line)) {
+          flushParagraph(paragraph)
+          const isOrdered = ordered.test(line)
+          const items = []
+          const pick = isOrdered ? ordered : bullet
+          while (index < lines.length && pick.test(lines[index])) {
+            items.push(pick.exec(lines[index])[1])
+            index += 1
+          }
+          const tag = isOrdered ? 'ol' : 'ul'
+          blocks.push(
+            h(
+              tag,
+              { key: `l${blocks.length}`, style: S.mdList },
+              items.map((item, itemIndex) =>
+                h('li', { key: itemIndex, style: S.mdLi }, renderInline(item, `l${blocks.length}-${itemIndex}`)),
+              ),
+            ),
+          )
+          continue
+        }
+
+        // 表格：至少两行、第二行是 |---| 分隔。
+        if (line.includes('|') && index + 1 < lines.length && /^\s*\|?[\s:-]*\|[\s:|-]*$/.test(lines[index + 1])) {
+          const splitRow = (row) =>
+            row
+              .trim()
+              .replace(/^\|/, '')
+              .replace(/\|$/, '')
+              .split('|')
+              .map((cell) => cell.trim())
+          const header = splitRow(line)
+          index += 2
+          const rows = []
+          while (index < lines.length && lines[index].includes('|') && lines[index].trim() !== '') {
+            rows.push(splitRow(lines[index]))
+            index += 1
+          }
+          blocks.push(
+            h(
+              'div',
+              { key: `t${blocks.length}`, style: S.mdTableWrap },
+              h(
+                'table',
+                { style: S.mdTable },
+                h(
+                  'thead',
+                  null,
+                  h(
+                    'tr',
+                    null,
+                    header.map((cell, cellIndex) =>
+                      h('th', { key: cellIndex, style: S.mdTh }, renderInline(cell, `th${cellIndex}`)),
+                    ),
+                  ),
+                ),
+                h(
+                  'tbody',
+                  null,
+                  rows.map((row, rowIndex) =>
+                    h(
+                      'tr',
+                      { key: rowIndex },
+                      row.map((cell, cellIndex) =>
+                        h('td', { key: cellIndex, style: S.mdTd }, renderInline(cell, `td${rowIndex}-${cellIndex}`)),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          )
+          continue
+        }
+
+        // 空行 = 段落边界
+        if (line.trim() === '') {
+          flushParagraph(paragraph)
+          index += 1
+          continue
+        }
+
+        paragraph.push(line)
+        index += 1
+      }
+
+      flushParagraph(paragraph)
+      return blocks
+    }
+
+    /**
+     * 渲染一条对话。并排视图只保留"我 ↔ AI 的对话正文"，
      * 工具调用/思考过程在 Host 侧折叠阶段就丢掉了，这里再兜一层：
      * 认不出的类型直接跳过，不画任何噪音行。
+     * 正文按 Markdown 渲染（标题/列表/粗体/代码块/表格），这才是会话本来的样子。
      */
-    function renderDigestItem(item, index) {
+    function renderDigestItem(item, index, onForward) {
       const kind = item && item.kind
       if (kind !== 'user' && kind !== 'assistant') return null
       const isUser = kind === 'user'
       const roleText = isUser ? '我' : '助手'
-      const color = isUser ? 'var(--dsw-alias-brand-primary)' : RUNNING_COLOR
       return h(
         'div',
-        { key: index, style: isUser ? S.digestMsgUser : S.digestMsgAssistant },
-        h('span', { style: { ...S.digestRole, color } }, roleText),
-        h('div', { style: S.digestText }, clip(item.text, 6000)),
+        {
+          key: index,
+          style: isUser ? { ...S.digestRow, ...S.digestRowUser } : { ...S.digestRow, ...S.digestRowAssistant },
+        },
+        h(
+          'div',
+          { style: isUser ? S.digestBubbleUser : S.digestBubbleAssistant },
+          h(
+            'div',
+            { style: S.digestRoleRow },
+            h(
+              'div',
+              { style: isUser ? { ...S.digestRole, ...S.digestRoleUser } : { ...S.digestRole, ...S.digestRoleAssistant } },
+              roleText,
+            ),
+            // 传给别的会话：把这段结论一键塞给另一个会话当输入，不用手动复制粘贴再切过去。
+            typeof onForward === 'function'
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    style: S.forwardBtn,
+                    title: '把这条转发给另一个会话',
+                    onClick: (event) => {
+                      event.stopPropagation()
+                      onForward(String(item.text ?? ''))
+                    },
+                  },
+                  '转发',
+                )
+              : null,
+          ),
+          h('div', { style: S.digestText }, renderMarkdown(clip(item.text, 20000))),
+        ),
       )
     }
 
@@ -1179,7 +1866,7 @@ let promptProbed = false
       } else if (digest.items.length === 0) {
         content = h('div', { style: S.boardEmpty }, '这个会话还没有可显示的对话。')
       } else {
-        content = digest.items.map((item, index) => renderDigestItem(item, index))
+        content = digest.items.map((item, index) => renderDigestItem(item, index, props.onForward))
       }
 
       const head = h(
@@ -1200,8 +1887,8 @@ let promptProbed = false
           'button',
           {
             type: 'button',
-            style: S.pinBtn,
-            title: '取消钉住',
+            style: S.colCloseBtn,
+            title: '从并排视图中移除这一列',
             onClick: () => props.onUnpin(entry.id),
           },
           '×',
@@ -1239,8 +1926,7 @@ let promptProbed = false
           moreBar,
           content,
         ),
-        h(SendBox, { entry, onSent: () => setNonce((value) => value + 1) }),
-      )
+        h(SendBox, { entry, onSent: () => setNonce((value) => value + 1) }),      )
     }
 
     function MultiSessionPanel(props) {
@@ -1255,6 +1941,21 @@ let promptProbed = false
        */
       const [pinned, setPinned] = React.useState(() => loadPinned())
       const [tick, setTick] = React.useState(0)
+      /**
+       * 跨会话全文搜索。
+       * 走 Host 的 sessionController.search —— 官方语义是
+       * "Search visible Session content without resuming an Agent"，
+       * 不会激活会话、不烧 token，找到的只是历史上已经写下的文字。
+       */
+      const [query, setQuery] = React.useState('')
+      const [searching, setSearching] = React.useState(false)
+      const [hits, setHits] = React.useState(null)
+      /**
+       * 会话间传话：{ text, fromId }。
+       * 在并排列里点「转发」把这段结论塞进这里，再选一个目标会话发过去，
+       * 省掉"复制 → 切过去 → 粘贴"三步。
+       */
+      const [forward, setForward] = React.useState(null)
 
       const workspaceIndex = React.useMemo(() => readWorkspaces(workspaces), [workspaces])
       const entries = React.useMemo(
@@ -1393,6 +2094,51 @@ let promptProbed = false
         })
       }, [])
 
+      /** 跑一次跨会话搜索。空查询直接清空结果，不发请求。 */
+      const runSearch = React.useCallback(async (text) => {
+        const value = String(text ?? '').trim()
+        if (value === '') {
+          setHits(null)
+          setSearching(false)
+          return
+        }
+        setSearching(true)
+        try {
+          /*
+           * 把当前面板里看得到的会话 id 一起传过去。
+           * 原因：有些部署把 session-query 索引关掉了（openAt: "never"），
+           * 官方全文检索直接报 "session search is disabled"；Host 侧这时会退化成
+           * 逐个会话扫事件日志——慢，所以只让它扫我们真的看得到的这批，而不是全部 400+。
+           */
+          const scanIds = entries
+            .filter((entry) => !entry.archived && !entry.blank)
+            .slice(0, 40)
+            .map((entry) => entry.id)
+          const scanParam = scanIds.length > 0 ? `&sessions=${encodeURIComponent(scanIds.join(','))}` : ''
+          const response = await fetch(
+            `/plugins/dsh-multi-session/search?q=${encodeURIComponent(value)}${scanParam}`,
+            { cache: 'no-store' },
+          )
+          const body = await response.json()
+          if (!response.ok || !body || body.ok !== true) {
+            setHits({ error: String(body?.error ?? `HTTP ${response.status}`), items: [] })
+            return
+          }
+          setHits({
+            error: '',
+            items: Array.isArray(body.items) ? body.items : [],
+            hasMore: body.hasMore === true,
+            via: typeof body.via === 'string' ? body.via : '',
+            ms: Number(body.ms) || 0,
+            scanned: Number(body.scanned) || 0,
+          })
+        } catch (cause) {
+          setHits({ error: String(cause && cause.message ? cause.message : cause), items: [] })
+        } finally {
+          setSearching(false)
+        }
+      }, [entries])
+
       const pinnedEntries = React.useMemo(
         () =>
           pinned
@@ -1453,8 +2199,56 @@ let promptProbed = false
       const listPane = h(
         'div',
         { style: splitMode ? S.listPane : S.listPaneWide },
-        listContent,
-        listTail,
+        // 有搜索结果时，列表换成"命中的会话 + 命中的那句话"。
+        hits !== null
+          ? h(SearchResults, { hits, entries, onOpen: handleOpen, onClear: () => { setQuery(''); setHits(null) } })
+          : listContent,
+        hits !== null ? null : listTail,
+      )
+
+      const searchBar = h(
+        'div',
+        { style: S.searchBar },
+        h('input', {
+          type: 'search',
+          value: query,
+          placeholder: '在所有会话里搜一句话…',
+          style: S.searchInput,
+          onChange: (event) => setQuery(event.target.value),
+          onKeyDown: (event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              runSearch(query)
+            } else if (event.key === 'Escape') {
+              setQuery('')
+              setHits(null)
+            }
+          },
+        }),
+        h(
+          'button',
+          {
+            type: 'button',
+            style: S.searchBtn,
+            disabled: searching,
+            onClick: () => runSearch(query),
+          },
+          searching ? '搜索中…' : '搜索',
+        ),
+        hits !== null
+          ? h(
+              'button',
+              {
+                type: 'button',
+                style: S.searchBtn,
+                onClick: () => {
+                  setQuery('')
+                  setHits(null)
+                },
+              },
+              '清空',
+            )
+          : null,
       )
 
       return h(
@@ -1523,6 +2317,15 @@ let promptProbed = false
               )
             : null,
         ),
+        searchBar,
+        forward !== null
+          ? h(ForwardBar, {
+              pending: forward,
+              entries,
+              onCancel: () => setForward(null),
+              onDone: () => setForward(null),
+            })
+          : null,
         splitMode
           ? h(
               'div',
@@ -1537,11 +2340,153 @@ let promptProbed = false
                     entry,
                     onOpen: handleOpen,
                     onUnpin: unpin,
+                    onForward: (text) => setForward({ text, fromId: entry.id, fromTitle: entry.title }),
                   }),
                 ),
               ),
             )
-          : h('div', { style: S.body }, listContent, listTail),
+          /*
+           * 没钉住会话时也要走 listPane，不能直接铺 listContent。
+           * 之前这里写的是 listContent，于是"有搜索结果时把列表换成命中结果"这段
+           * 只在并排模式下生效——总览模式搜完什么都不变，看起来就是搜索没反应。
+           */
+          : h('div', { style: S.body }, listPane),
+      )
+    }
+
+    /**
+     * 会话间传话：把一段结论发到别的会话里。
+     * 默认用 queue（排进对方收件箱，不打断它正在跑的回合）——
+     * 传话的语义是"补充信息"，不是"立刻打断它"。
+     */
+    function ForwardBar(props) {
+      const pending = props.pending
+      const [targetId, setTargetId] = React.useState('')
+      const [busy, setBusy] = React.useState(false)
+      const [note, setNote] = React.useState('')
+
+      // 目标候选：所有非归档、非自己的会话，按最近活跃排序，只列前 30 个免得下拉框爆炸。
+      const options = React.useMemo(() => {
+        return props.entries
+          .filter((entry) => entry.id !== pending.fromId && !entry.archived && !entry.blank)
+          .sort((left, right) => right.updatedAt - left.updatedAt)
+          .slice(0, 30)
+      }, [props.entries, pending.fromId])
+
+      const send = async () => {
+        if (busy || targetId === '') return
+        setBusy(true)
+        setNote('')
+        try {
+          const response = await fetch('/plugins/dsh-multi-session/prompt', {
+            method: 'POST',
+            cache: 'no-store',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sessionId: targetId, text: pending.text, mode: 'queue' }),
+          })
+          const body = await response.json().catch(() => null)
+          if (!response.ok || !body || body.ok !== true) {
+            throw new Error((body && body.error) || `HTTP ${response.status}`)
+          }
+          props.onDone()
+        } catch (cause) {
+          setNote(`发送失败：${cause && cause.message ? cause.message : cause}`)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      return h(
+        'div',
+        { style: S.forwardBar },
+        h('span', { style: S.forwardLabel }, `转发自「${clip(pending.fromTitle, 20)}」`),
+        h(
+          'select',
+          {
+            style: S.forwardSelect,
+            value: targetId,
+            onChange: (event) => setTargetId(event.target.value),
+          },
+          h('option', { value: '' }, '选一个目标会话…'),
+          options.map((entry) => h('option', { key: entry.id, value: entry.id }, entry.title)),
+        ),
+        h(
+          'button',
+          {
+            type: 'button',
+            style: { ...S.forwardBtnOk, opacity: busy || targetId === '' ? 0.5 : 1 },
+            disabled: busy || targetId === '',
+            onClick: send,
+          },
+          busy ? '…' : '发过去',
+        ),
+        h(
+          'button',
+          { type: 'button', style: S.forwardCancel, onClick: props.onCancel },
+          '取消',
+        ),
+        note !== '' ? h('span', { style: S.forwardNote }, note) : null,
+      )
+    }
+
+    /**
+     * 搜索结果：每个命中显示"是哪个会话 + 那句话"，点一下直接跳过去。
+     * 命中的会话可能没在当前过滤条件里（比如是子代理），所以标题从 entries 里兜底查。
+     */
+    function SearchResults(props) {
+      const hits = props.hits
+      const items = Array.isArray(hits.items) ? hits.items : []
+      if (hits.error) {
+        return h('div', { style: S.empty }, `搜索失败：${hits.error}`)
+      }
+      if (items.length === 0) {
+        return h('div', { style: S.empty }, '没有找到。换个词试试，搜的是会话里写过的正文。')
+      }
+      // 同一个会话可能命中多句，按会话归组更省眼。
+      const groups = new Map()
+      for (const item of items) {
+        const key = String(item.sessionId ?? '')
+        let bucket = groups.get(key)
+        if (!bucket) {
+          const entry = props.entries.find((candidate) => candidate.id === key)
+          bucket = { key, title: entry ? entry.title : key.slice(0, 18), snippets: [] }
+          groups.set(key, bucket)
+        }
+        if (bucket.snippets.length < 4) bucket.snippets.push(String(item.snippet ?? ''))
+      }
+      // 索引被关掉的部署走的是"逐会话扫日志"，把这件事告诉用户，免得他觉得慢是卡了。
+      const scanNote =
+        hits.via === 'scan'
+          ? `（本机没开全文索引，直接扫了 ${hits.scanned || 0} 个会话的日志，${hits.ms > 0 ? `${(hits.ms / 1000).toFixed(1)} 秒` : ''}）`
+          : ''
+      return h(
+        'div',
+        { style: S.searchResults },
+        h(
+          'div',
+          { style: S.searchSummary },
+          `命中 ${items.length} 处，分布在 ${groups.size} 个会话`,
+          hits.hasMore ? '（结果已截断）' : '',
+          scanNote,
+        ),
+        Array.from(groups.values()).map((group) =>
+          h(
+            'div',
+            { key: group.key, style: S.searchHitGroup },
+            h(
+              'div',
+              {
+                style: S.searchHitTitle,
+                title: '跳到这个会话',
+                onClick: () => props.onOpen(group.key),
+              },
+              group.title,
+            ),
+            group.snippets.map((snippet, index) =>
+              h('div', { key: index, style: S.searchSnippet }, snippet),
+            ),
+          ),
+        ),
       )
     }
 
@@ -1925,7 +2870,19 @@ let promptProbed = false
       inject: ['slots'],
       // 仅供离线 harness 直接渲染内部组件；宿主只读 inject/apply，多出的键无副作用。
       __internals: DIAG
-        ? { PinnedColumn, renderDigestItem, fetchDigest, MultiSessionPanel, SessionCard, LastLine, SendBox, openSession }
+        ? {
+            PinnedColumn,
+            renderDigestItem,
+            fetchDigest,
+            MultiSessionPanel,
+            SessionCard,
+            LastLine,
+            ChangesLine,
+            SendBox,
+            SearchResults,
+            ForwardBar,
+            openSession,
+          }
         : undefined,
       apply(ctx) {
         rootCtx = ctx

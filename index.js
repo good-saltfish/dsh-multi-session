@@ -9,8 +9,10 @@
  */
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
+import { zstdDecompressSync } from 'node:zlib'
 
 export const name = 'dsh-multi-session'
 
@@ -57,7 +59,10 @@ const MAX_PROBES = 20
 /** 会话对话摘要：面板里点开某个会话时由 Host 侧读真实事件日志再折叠。 */
 const DIGEST_ROUTE = '/plugins/dsh-multi-session/digest'
 const PROMPT_ROUTE = '/plugins/dsh-multi-session/prompt'
+const SEARCH_ROUTE = '/plugins/dsh-multi-session/search'
 const PROMPT_TIMEOUT_MS = 15000
+// 提问工具停下等答案时，会话的 running 仍然是 true —— 光看 running 分不出来。
+const ASK_TOOL = 'ask_user_question'
 
 /**
  * 每个会话的摘要缓存。readSurface 一次要 2.5 秒（整段日志重放），
@@ -137,6 +142,13 @@ function foldDigest(events, limit) {
   let turns = 0
   let userTurns = 0
   let endReason = null
+  // 「在等你」判定用的状态：
+  // - 未决的审批（approval/asked 有、approval/decided 没有）
+  // - 未返回的提问工具（ask_user_question 的 tool/call 有、tool/result 没有）
+  const pendingCalls = new Map()
+  const openApprovals = new Set()
+  let lastWorkspaceSeq = 0
+  let lastWorkspaceTurn = 0
   for (const event of Array.isArray(events) ? events : []) {
     if (event === null || typeof event !== 'object') continue
     const data = event.data !== null && typeof event.data === 'object' ? event.data : {}
@@ -155,11 +167,236 @@ function foldDigest(events, limit) {
       if (text !== '') {
         items.push({ kind: 'assistant', text: text.length > 3000 ? `${text.slice(0, 3000)}…` : text, at })
       }
+    } else if (event.type === 'tool/call') {
+      const callId = String(data.callId ?? '')
+      const name = String(data.name ?? '')
+      if (callId !== '') pendingCalls.set(callId, { name, at })
+    } else if (event.type === 'tool/result') {
+      const callId = String(data.message?.toolCallId ?? '')
+      if (callId !== '') pendingCalls.delete(callId)
+    } else if (event.type === 'approval/asked') {
+      openApprovals.add(String(data.id ?? ''))
+    } else if (event.type === 'approval/decided') {
+      openApprovals.delete(String(data.id ?? ''))
+    } else if (event.type === 'workspace/changes') {
+      // seq 必须记住：workspaceChanges.summary() 只认这条事件的 seq。
+      lastWorkspaceSeq = typeof event.seq === 'number' ? event.seq : 0
+      lastWorkspaceTurn = Number(data.turn) || 0
     }
-    // tool/call、tool/result 一律不搬：并排视图只保留"我 ↔ AI 的对话正文"，
-    // 工具调用和它们的输出对"看清这段聊了什么"是纯噪音。
+    // tool/call、tool/result 一律不搬进 items：并排视图只保留"我 ↔ AI 的对话正文"，
+    // 工具调用和它们的输出对"看清这段聊了什么"是纯噪音。上面的状态跟踪只用于判定状态。
   }
-  return { items: items.slice(-limit), turns: turns > 0 ? turns : userTurns, endReason }
+
+  // 「在等你」的两种来源，任一成立即算：
+  // 1) 有未决的审批请求（approval/asked 没有对应的 approval/decided）；
+  // 2) 最后一个工具调用是 ask_user_question 且还没返回结果。
+  let waiting = ''
+  if (openApprovals.size > 0) {
+    waiting = 'approval'
+  } else {
+    for (const call of pendingCalls.values()) {
+      if (call.name === ASK_TOOL) {
+        waiting = 'question'
+        break
+      }
+    }
+  }
+
+  return {
+    items: items.slice(-limit),
+    turns: turns > 0 ? turns : userTurns,
+    endReason,
+    waiting,
+    workspaceSeq: lastWorkspaceSeq,
+    workspaceTurn: lastWorkspaceTurn,
+  }
+}
+
+/**
+ * 这一轮改了哪些文件。走 workspaceChanges.summary()，它只认 `workspace/changes`
+ * 事件的 seq —— 也就是说必须用 foldDigest 顺带记下来的那个 seq，传别的 seq 一律 undefined。
+ * 拿不到就返回 null，让客户端当成"没信息"而不是"改了 0 个文件"。
+ */
+function summarizeChanges(service, sessionId, folded) {
+  const seq = Number(folded?.workspaceSeq) || 0
+  if (seq <= 0) return null
+  if (service === undefined || service === null || typeof service.summary !== 'function') return null
+  let summary
+  try {
+    summary = service.summary(sessionId, seq)
+  } catch {
+    return null
+  }
+  if (summary === null || typeof summary !== 'object') return null
+  const files = Array.isArray(summary.files) ? summary.files : []
+  return {
+    turn: Number(summary.turn) || 0,
+    total: Number(summary.total) || files.length,
+    added: Number(summary.added) || 0,
+    deleted: Number(summary.deleted) || 0,
+    files: files.slice(0, 40).map((file) => ({
+      path: String(file?.path ?? ''),
+      display: String(file?.display ?? file?.path ?? ''),
+      added: Number(file?.added) || 0,
+      deleted: Number(file?.deleted) || 0,
+      binary: file?.binary === true,
+      oversized: file?.oversized === true,
+    })),
+  }
+}
+
+/**
+ * 请求是不是从本机发起的。只用于开发期自测与 loopback 放行，
+ * 不参与任何业务鉴权判断（业务一律走 connection.requestRejection）。
+ */
+function isLoopback(req) {
+  const address = String(req?.socket?.remoteAddress ?? '')
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
+}
+
+/**
+ * 逐个会话扫日志的兜底搜索。
+ *
+ * 为什么不用 sessionQuery.filterEvents：它每次要把整个会话完整重放一遍，
+ * 实测单个会话 3.35 秒（那个会话 33513 个事件）。扫 40 个会话要 30 多秒。
+ *
+ * 为什么不能直接 readFile 就得到文本：DSH 的会话日志是**多个 zstd 帧拼接**的
+ * （一个会话实测 281 帧），Node 的 zstdDecompressSync 只解第一帧就停，
+ * createZstdDecompress 流式也只解第一帧。必须按 magic 0x28B52FFD 切开逐帧解。
+ *
+ * 实测：1041KB 的文件解成 2744KB 只要 33ms，全文扫 31ms —— 快 50 倍。
+ */
+const SESSION_MAGIC = Buffer.from([0x28, 0xb5, 0x2f, 0xfd])
+/** sessionId → 日志文件路径。目录结构很浅、文件不多，缓存一次就够。 */
+const sessionFileCache = new Map()
+
+function sessionsRoot() {
+  return join(homedir(), '.dsh', 'sessions')
+}
+
+/** 在 sessions/<分组>/<uuid>/session.*.jsonl* 里找这个会话的日志文件。 */
+function findSessionFile(sessionId) {
+  const cached = sessionFileCache.get(sessionId)
+  if (cached !== undefined) return cached
+  const bare = String(sessionId).replace(/^session-/, '')
+  const root = sessionsRoot()
+  let found = null
+  let groups = []
+  try {
+    groups = readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory())
+  } catch {
+    return null
+  }
+  for (const group of groups) {
+    const dir = join(root, group.name, bare)
+    try {
+      const files = readdirSync(dir).filter((name) => name.startsWith('session.') && name.includes('jsonl'))
+      if (files.length > 0) {
+        found = join(dir, files[0])
+        break
+      }
+    } catch {
+      // 这个分组里没有，继续下一个。
+    }
+  }
+  sessionFileCache.set(sessionId, found)
+  return found
+}
+
+/** 把多帧 zstd（或普通 jsonl）解成 UTF-8 文本。解不动的帧跳过，不让整次搜索失败。 */
+function readSessionLogText(file) {
+  const raw = readFileSync(file)
+  let buffer = raw
+  if (file.endsWith('.zstd')) {
+    const offsets = []
+    let at = 0
+    while ((at = raw.indexOf(SESSION_MAGIC, at)) >= 0) {
+      offsets.push(at)
+      at += 4
+    }
+    const parts = []
+    for (let index = 0; index < offsets.length; index += 1) {
+      const start = offsets[index]
+      const end = index + 1 < offsets.length ? offsets[index + 1] : raw.length
+      try {
+        parts.push(zstdDecompressSync(raw.subarray(start, end)))
+      } catch {
+        // 单帧坏了就跳过。
+      }
+    }
+    buffer = Buffer.concat(parts)
+  }
+  return buffer.toString('utf8')
+}
+
+/**
+ * 哪些事件算"对话正文"。搜索只在这几类里找：
+ * 用户看的是"哪句话在哪个会话里说过"，而不是内部状态变更。
+ * 尤其 `agent/inbox/spliced` 会把同一条用户消息再抄一遍，不排除就会重复命中。
+ */
+const SEARCHABLE_TYPES = new Set(['user/message', 'assistant/message'])
+
+/**
+ * 一行日志的 JSON → 事件类型。解析失败返回空串（搜索照样能用，只是不给标签）。
+ */
+function eventTypeOf(line) {
+  const at = line.indexOf('"type":"')
+  if (at < 0) return ''
+  const start = at + 8
+  const end = line.indexOf('"', start)
+  if (end < 0) return ''
+  const value = line.slice(start, end)
+  // 头一行是 {"type":"session",...}，不是事件。
+  return value === 'session' ? '' : value
+}
+
+/**
+ * 一行日志 → 可读正文。
+ *
+ * user/message 的正文在 `data.content[].text`，
+ * assistant/message 的在 `data.message.content[].text`（多包一层 message）。
+ * 抽不到就退回整行原文 —— 搜索要的是"这句话在哪"，不是精确的字段还原。
+ */
+function lineOfText(line) {
+  const trimmed = line.trim()
+  if (trimmed === '') return ''
+  try {
+    const parsed = JSON.parse(trimmed)
+    const data = parsed && typeof parsed === 'object' ? parsed.data : null
+    if (data !== null && typeof data === 'object') {
+      const owners = [data, data.message]
+      for (const owner of owners) {
+        if (owner === null || typeof owner !== 'object') continue
+        const blocks = Array.isArray(owner.content) ? owner.content : null
+        if (blocks === null) continue
+        const texts = []
+        for (const block of blocks) {
+          if (block && typeof block === 'object' && typeof block.text === 'string' && block.text !== '') {
+            texts.push(block.text)
+          }
+        }
+        if (texts.length > 0) return texts.join('\n')
+      }
+      if (typeof data.text === 'string' && data.text !== '') return data.text
+    }
+  } catch {
+    // 不是完整 JSON（多帧截断之类），退回原文。
+  }
+  return trimmed
+}
+
+/**
+ * 从一段文本里截出命中处前后各 60 字，让结果能看出是"哪句话里命中的"。
+ * 找不到就返回开头 160 字（有些事件的 text 是拼装出来的，下标可能对不上）。
+ */
+function snippetAround(text, needle) {
+  const source = String(text ?? '')
+  if (source === '') return ''
+  const at = needle === '' ? -1 : source.toLowerCase().indexOf(needle)
+  if (at < 0) return source.replace(/\s+/g, ' ').slice(0, 160)
+  const start = Math.max(0, at - 60)
+  const end = Math.min(source.length, at + needle.length + 60)
+  return `${start > 0 ? '…' : ''}${source.slice(start, end).replace(/\s+/g, ' ')}${end < source.length ? '…' : ''}`
 }
 
 function sendJson(res, status, value, options = {}) {
@@ -516,7 +753,7 @@ export function apply(ctx, config) {
           // v3：折叠规则变了（只剩我↔AI 正文），旧缓存必须失效。
           // live 必须进键：运行中的短 TTL 缓存和空闲的长 TTL 缓存不能互相污染，
           // 否则会话刚跑完那一刻，空闲请求会命中"助手最后一句话还没写进去"的旧 payload。
-          const cacheKey = `v4:${mode}:${live ? 'live' : 'idle'}:${sessionId}:${limit}`
+          const cacheKey = `v5:${mode}:${live ? 'live' : 'idle'}:${sessionId}:${limit}`
           const ttl = live ? DIGEST_TTL_LIVE : DIGEST_TTL_IDLE
           if (!noCache) {
             const hit = digestCache.get(cacheKey)
@@ -571,6 +808,7 @@ export function apply(ctx, config) {
             }
 
             const folded = foldDigest(events, limit)
+            const changes = summarizeChanges(get('workspaceChanges'), sessionId, folded)
             remember({
               ok: true,
               mode: 'observe',
@@ -581,6 +819,8 @@ export function apply(ctx, config) {
               cursor,
               turns: folded.turns,
               endReason: folded.endReason,
+              waiting: folded.waiting,
+              changes,
               items: folded.items,
             })
             return
@@ -673,6 +913,198 @@ export function apply(ctx, config) {
         } catch (error) {
           sendJson(res, 404, { error: String(error?.message ?? error) })
         }
+      },
+    }),
+  )
+
+  // 跨会话全文搜索：sessionController.search 的官方语义是
+  // "Search visible Session content without resuming an Agent"，
+  // 也就是不会激活会话、不烧 token，找到的只是历史上已经写下的文字。
+  ctx.effect(() =>
+    webServer.register({
+      kind: 'exact',
+      path: SEARCH_ROUTE,
+      async handler(req, res) {
+        const method = String(req.method ?? 'GET').toUpperCase()
+        if (method !== 'GET' && method !== 'HEAD') {
+          sendJson(res, 405, { error: 'method not allowed' }, { headers: { allow: 'GET, HEAD' } })
+          return
+        }
+
+        let params
+        try {
+          params = new URL(String(req.url ?? '/'), 'http://127.0.0.1').searchParams
+        } catch {
+          sendJson(res, 400, { error: 'bad url' })
+          return
+        }
+
+        // 开发期自测：确认"索引关掉之后磁盘扫描到底能不能用"。
+        // 只在本机（回环）+ dev 开关同时满足时才开 —— 这条分支能把会话正文原文吐出来，
+        // 生产环境绝不能留这个口子。
+        if (params.get('selftest') === '1' && DEV && isLoopback(req)) {
+          const probeId = (params.get('sessionId') ?? '').trim()
+          const probeQuery = (params.get('q') ?? '').trim()
+          if (probeId === '' || probeQuery === '') {
+            sendJson(res, 400, { error: 'selftest needs ?q=&sessionId=' })
+            return
+          }
+          try {
+            const startedAt = Date.now()
+            const file = findSessionFile(probeId)
+            const findMs = Date.now() - startedAt
+            if (file === null) {
+              sendJson(res, 200, { ok: true, selftest: true, file: null, findMs, note: 'no log file for this session' })
+              return
+            }
+            const readStart = Date.now()
+            const text = readSessionLogText(file)
+            const readMs = Date.now() - readStart
+            const needle = probeQuery.toLowerCase()
+            const hits = []
+            let count = 0
+            for (const line of text.split('\n')) {
+              if (line === '') continue
+              if (!line.toLowerCase().includes(needle)) continue
+              const type = eventTypeOf(line)
+              if (!SEARCHABLE_TYPES.has(type)) continue
+              count += 1
+              if (hits.length < 3) hits.push({ type, snippet: snippetAround(lineOfText(line), needle) })
+            }
+            sendJson(res, 200, {
+              ok: true,
+              selftest: true,
+              file: file.replace(/^.*[\\/]/, ''),
+              findMs,
+              readMs,
+              sourceBytes: text.length,
+              count,
+              hits,
+            })
+          } catch (error) {
+            sendJson(res, 502, { error: String(error?.message ?? error) })
+          }
+          return
+        }
+
+        const gate = connectionOf()
+        const rejection = gate === undefined ? 503 : gate.requestRejection(req)
+        if (rejection !== undefined) {
+          sendJson(res, rejection, {
+            error: rejection === 503 ? 'authentication unavailable' : rejection === 401 ? 'unauthorized' : 'forbidden',
+          })
+          return
+        }
+
+        const query = (params.get('q') ?? '').trim()
+        if (query === '') {
+          sendJson(res, 400, { error: 'q is required' })
+          return
+        }
+
+        const sessionController = get('sessionController')
+
+        // 1) 优先用官方索引：快、带排序，而且覆盖全部可见会话。
+        if (sessionController !== undefined && typeof sessionController.search === 'function') {
+          const probe = new AbortController()
+          const probeTimer = setTimeout(() => probe.abort(), 8000)
+          try {
+            const startedAt = Date.now()
+            const value = await sessionController.search({ query }, probe.signal)
+            const items = Array.isArray(value?.items) ? value.items : []
+            sendJson(res, 200, {
+              ok: true,
+              query,
+              via: 'index',
+              ms: Date.now() - startedAt,
+              hasMore: value?.hasMore === true,
+              items: items.slice(0, 60).map((item) => ({
+                sessionId: String(item?.sessionId ?? ''),
+                snippet: String(item?.snippet ?? '').slice(0, 400),
+              })),
+            })
+            return
+          } catch {
+            // 这个部署把索引关掉了（openAt: "never"）→ 静默落到下面的自建扫描。
+          } finally {
+            clearTimeout(probeTimer)
+          }
+        }
+
+        // 2) 兜底：直接读磁盘上的会话日志。
+        //
+        // this deployment 把 session-query 索引配成 openAt: "never" 时，官方
+        // sessionController.search 直接报 "session search is disabled"。
+        // sessionQuery.filterEvents 虽然可用，但每个会话要完整重放，实测 3.35 秒/会话；
+        // 直接解 zstd 帧再扫只要 64ms/会话（差 50 倍），所以走这条。
+        const ids = (params.get('sessions') ?? '')
+          .split(',')
+          .map((one) => one.trim())
+          .filter((one) => one !== '')
+          .slice(0, 60)
+        if (ids.length === 0) {
+          sendJson(res, 400, {
+            error: 'session search index is disabled in this deployment; pass ?sessions=id1,id2 to scan those sessions directly',
+          })
+          return
+        }
+
+        const needle = query.toLowerCase()
+        const startedAt = Date.now()
+        const results = []
+        let scanned = 0
+        let unreadable = 0
+        const CONCURRENCY = 4
+        let cursor = 0
+        const worker = async () => {
+          while (cursor < ids.length) {
+            const index = cursor
+            cursor += 1
+            const sessionId = ids[index]
+            try {
+              const file = findSessionFile(sessionId)
+              scanned += 1
+              if (file === null) {
+                unreadable += 1
+                continue
+              }
+              const text = readSessionLogText(file)
+              if (text === '') continue
+              const hits = []
+              let count = 0
+              for (const line of text.split('\n')) {
+                if (line === '') continue
+                if (!line.toLowerCase().includes(needle)) continue
+                const type = eventTypeOf(line)
+                if (!SEARCHABLE_TYPES.has(type)) continue
+                count += 1
+                if (hits.length < 4) {
+                  hits.push({ type, role: type === 'user/message' ? '我' : '助手', snippet: snippetAround(lineOfText(line), needle) })
+                }
+              }
+              if (count > 0) results.push({ sessionId, count, hits })
+            } catch {
+              // 单个会话读失败就跳过，不让整次搜索崩掉。
+            }
+          }
+        }
+        await Promise.all(Array.from({ length: Math.min(CONCURRENCY, ids.length) }, worker))
+        results.sort((left, right) => right.count - left.count)
+        sendJson(res, 200, {
+          ok: true,
+          query,
+          via: 'scan',
+          ms: Date.now() - startedAt,
+          scanned,
+          unreadable,
+          hasMore: ids.length >= 60,
+          items: results.slice(0, 60).map((item) => ({
+            sessionId: item.sessionId,
+            snippet: item.hits[0] ? item.hits[0].snippet : '',
+            count: item.count,
+            hits: item.hits,
+          })),
+        })
       },
     }),
   )
